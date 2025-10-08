@@ -1,0 +1,299 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Lab Scheduler • Demo</title>
+  <meta name="description" content="Serverless scheduling demo: GitHub Pages frontend with slots suggestion + confirm hooks." />
+  <!-- FullCalendar (CDN) -->
+  <link href="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.15/index.global.min.css" rel="stylesheet">
+  <script src="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.15/index.global.min.js"></script>
+  <style>
+    :root { --accent: #2563eb; --muted:#f1f5f9; --ok:#16a34a; --warn:#b45309; --err:#dc2626; }
+    * { box-sizing: border-box; }
+    body { font-family: system-ui, Segoe UI, Roboto, Apple Color Emoji, Noto Color Emoji, sans-serif; margin: 0; background: #0b1020; color: #e5e7eb; }
+    header { position: sticky; top: 0; z-index: 50; background: #0f172a; border-bottom: 1px solid #1f2937; }
+    header .wrap { display: flex; gap: 16px; align-items: center; padding: 12px 16px; max-width: 1200px; margin: 0 auto; }
+    header h1 { font-size: 18px; margin: 0; letter-spacing:.2px; }
+    header a { color: #93c5fd; }
+
+    .container { max-width: 1200px; margin: 20px auto; padding: 0 16px 40px; }
+    .grid { display: grid; grid-template-columns: 360px 1fr; gap: 16px; }
+    @media (max-width: 980px){ .grid { grid-template-columns: 1fr; } }
+
+    .card { background: #0f172a; border: 1px solid #1f2937; border-radius: 14px; padding: 14px; box-shadow: 0 10px 30px rgba(0,0,0,.3); }
+    .card h2 { font-size: 16px; margin: 0 0 8px; color: #bfdbfe; }
+    .field { display: grid; gap: 6px; margin: 10px 0; }
+    .field label { font-size: 12px; color: #cbd5e1; }
+    .field input, .field select, .field textarea { background: #0b1222; border: 1px solid #334155; color: #e5e7eb; border-radius: 10px; padding: 10px 12px; }
+    .row { display: grid; grid-template-columns: 1fr 1fr; gap:10px; }
+    .btn { appearance: none; border: 1px solid #3b82f6; background: #1d4ed8; color: white; font-weight: 600; padding: 10px 14px; border-radius: 12px; cursor: pointer; }
+    .btn.secondary { background: #0b1222; border-color: #475569; color:#cbd5e1 }
+    .btn.ghost { background: transparent; border-color: transparent; color:#93c5fd; }
+    .btn:disabled { opacity:.5; cursor: not-allowed; }
+
+    #status { font-size: 12px; color:#a7f3d0; margin-top: 6px; min-height: 18px; }
+
+    #suggestions { display: grid; gap: 8px; }
+    .slot { display:flex; justify-content: space-between; align-items: center; gap: 8px; background: #0b1222; border:1px solid #334155; border-radius: 12px; padding: 10px; }
+    .slot .meta { font-size: 12px; color:#cbd5e1; }
+    .slot .why { font-size: 12px; color:#94a3b8; }
+
+    footer { text-align:center; color:#94a3b8; font-size:12px; margin-top: 20px; }
+    code.inline { background:#0b1222; padding:2px 6px; border-radius:6px; border:1px solid #334155; }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="wrap">
+      <h1>Lab Scheduler • GitHub Pages Demo</h1>
+      <div style="margin-left:auto"></div>
+      <a href="#" id="toggle-mock" class="btn ghost" title="Toggle mock mode">Mock: <span id="mock-flag">On</span></a>
+    </div>
+  </header>
+  <div class="container">
+    <div class="grid">
+      <div class="card">
+        <h2>Find time</h2>
+        <div class="field">
+          <label>Attendees (emails, comma-separated)</label>
+          <textarea id="attendees" rows="2" placeholder="alice@org.com, bob@org.com"></textarea>
+        </div>
+        <div class="row">
+          <div class="field">
+            <label>Earliest date</label>
+            <input id="from" type="date" />
+          </div>
+          <div class="field">
+            <label>Latest date</label>
+            <input id="to" type="date" />
+          </div>
+        </div>
+        <div class="row">
+          <div class="field">
+            <label>Duration (minutes)</label>
+            <input id="duration" type="number" min="15" step="15" value="30" />
+          </div>
+          <div class="field">
+            <label>Timezone</label>
+            <select id="tz"></select>
+          </div>
+        </div>
+        <div class="row">
+          <div class="field">
+            <label>Business hours</label>
+            <select id="biz" >
+              <option value="9-18" selected>09:00–18:00</option>
+              <option value="8-20">08:00–20:00</option>
+              <option value="0-24">Anytime</option>
+            </select>
+          </div>
+          <div class="field">
+            <label>Buffer (minutes)</label>
+            <input id="buffer" type="number" min="0" step="5" value="15" />
+          </div>
+        </div>
+        <div class="row">
+          <button id="btn-suggest" class="btn">Suggest slots</button>
+          <button id="btn-clear" class="btn secondary">Clear</button>
+        </div>
+        <div id="status"></div>
+        <hr style="border-color:#1f2937; margin: 14px 0;" />
+        <h2>Suggestions</h2>
+        <div id="suggestions"></div>
+      </div>
+      <div class="card">
+        <div id="calendar"></div>
+      </div>
+    </div>
+
+    <footer>
+      Frontend runs on GitHub Pages. Hook it to your backend by setting <code class="inline">SUGGEST_ENDPOINT</code> and <code class="inline">CONFIRM_ENDPOINT</code> below.
+    </footer>
+  </div>
+
+<script>
+  // ===================== CONFIG =====================
+  // Fill these when your backend is ready (Apps Script or n8n). Keep them empty for mock mode.
+  const SUGGEST_ENDPOINT = ""; // e.g., "https://script.google.com/macros/s/AKfycb.../exec/suggest" or "https://your-n8n.cloud/webhook/suggest"
+  const CONFIRM_ENDPOINT = ""; // e.g., ".../confirm"
+  const DEFAULT_TIMEZONE = "America/New_York"; // matches lab locale
+  const MOCK_MODE = () => !SUGGEST_ENDPOINT || !CONFIRM_ENDPOINT;
+
+  // Expected backend payloads
+  // POST /suggest { attendees: string[], range: {fromISO, toISO}, durationMin: number, bufferMin: number, tz: string, bizHours: {start: number, end: number} }
+  // -> { slots: [{ start: ISO, end: ISO, score: number, reason: string, token?: string }] }
+  // POST /confirm { slot: { start: ISO, end: ISO }, attendees: string[], tz: string, clientId?: string, token?: string }
+  // -> { ok: true, eventId: string, htmlLink?: string }
+
+  // ===================== UTIL =====================
+  const $ = (id) => document.getElementById(id);
+  function fmt(dtISO, tz){
+    try { return new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short', timeZone: tz }).format(new Date(dtISO)); }
+    catch { return dtISO; }
+  }
+  function parseBiz(val){ const [s,e] = val.split('-').map(Number); return {start:s,end:e}; }
+  function isoAt(dateStr, hour, minute, tz){
+    // Build ISO at local tz; for simplicity we create Date from components then toISOString
+    const d = new Date(dateStr + 'T00:00:00');
+    d.setHours(hour, minute, 0, 0);
+    // The Date object is local TZ; we want ISO in that local time, not shifting to UTC.
+    // For API / backend, ISO UTC is fine; they can interpret by tz field.
+    return d.toISOString();
+  }
+
+  // ===================== CALENDAR =====================
+  let calendar;
+  document.addEventListener('DOMContentLoaded', () => {
+    // Timezone selector
+    const tzs = [DEFAULT_TIMEZONE, Intl.DateTimeFormat().resolvedOptions().timeZone, 'UTC', 'America/Los_Angeles', 'Europe/London', 'Asia/Seoul'];
+    const uniqueTzs = [...new Set(tzs.filter(Boolean))];
+    uniqueTzs.forEach(t => { const opt = document.createElement('option'); opt.value=t; opt.textContent=t; $('tz').appendChild(opt); });
+    $('tz').value = DEFAULT_TIMEZONE;
+
+    // Date defaults: today .. +7 days
+    const today = new Date();
+    const to7 = new Date(today.getTime() + 7*24*3600*1000);
+    $('from').valueAsDate = today;
+    $('to').valueAsDate = to7;
+
+    // Calendar init
+    calendar = new FullCalendar.Calendar(document.getElementById('calendar'), {
+      initialView: 'timeGridWeek',
+      nowIndicator: true,
+      height: 'auto',
+      headerToolbar: { left: 'prev,next today', center: 'title', right: 'timeGridDay,timeGridWeek,dayGridMonth' },
+      slotDuration: '00:30:00',
+      firstDay: 1,
+      timeZone: 'local', // display in viewer's local; we still send tz separately to backend
+      selectable: false,
+      events: [],
+    });
+    calendar.render();
+
+    $('btn-suggest').addEventListener('click', suggestSlots);
+    $('btn-clear').addEventListener('click', clearAll);
+    $('toggle-mock').addEventListener('click', (e)=>{ e.preventDefault();
+      const nowMock = MOCK_MODE();
+      if(nowMock){ alert('Endpoints are empty → mock mode already ON. To use real backend, set SUGGEST_ENDPOINT & CONFIRM_ENDPOINT in the source.'); }
+    });
+    updateStatus(`Ready. Mock mode ${MOCK_MODE()? 'ON':'OFF'}.`);
+  });
+
+  function updateStatus(msg, kind='info'){
+    const el = $('status');
+    el.style.color = kind==='error' ? 'var(--err)' : (kind==='ok' ? 'var(--ok)' : '#a7f3d0');
+    el.textContent = msg;
+  }
+
+  function clearAll(){
+    calendar.getEvents().forEach(e=>e.remove());
+    $('suggestions').innerHTML = '';
+    updateStatus('Cleared.');
+  }
+
+  async function suggestSlots(){
+    $('suggestions').innerHTML='';
+    updateStatus('Finding free time…');
+
+    const attendees = $('attendees').value.split(',').map(s=>s.trim()).filter(Boolean);
+    const from = $('from').value; const to = $('to').value; const tz = $('tz').value;
+    const durationMin = Number($('duration').value || 30);
+    const bufferMin = Number($('buffer').value || 0);
+    const bizHours = parseBiz($('biz').value);
+
+    const payload = {
+      attendees,
+      range: { fromISO: isoAt(from, 0,0, tz), toISO: isoAt(to, 23,59, tz) },
+      durationMin, bufferMin, tz, bizHours
+    };
+
+    let data;
+    try {
+      if(MOCK_MODE()){
+        await sleep(400);
+        data = mockSuggest(payload);
+      } else {
+        const res = await fetch(SUGGEST_ENDPOINT, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload)
+        });
+        if(!res.ok) throw new Error(`Suggest failed: ${res.status}`);
+        data = await res.json();
+      }
+      renderSuggestions(data.slots, attendees, tz);
+      updateStatus(`Got ${data.slots.length} suggestion(s).`, 'ok');
+    } catch(err){
+      console.error(err); updateStatus(String(err.message||err), 'error');
+    }
+  }
+
+  function renderSuggestions(slots, attendees, tz){
+    const list = $('suggestions');
+    list.innerHTML = '';
+
+    slots.forEach((s, idx)=>{
+      // Paint on calendar for visual context
+      calendar.addEvent({ title: `Option ${idx+1} (${Math.round(s.score*100)}%)`, start: s.start, end: s.end });
+
+      const div = document.createElement('div');
+      div.className = 'slot';
+      const left = document.createElement('div');
+      left.innerHTML = `<div class="meta"><strong>Option ${idx+1}</strong> · ${fmt(s.start, tz)} — ${fmt(s.end, tz)}</div>` +
+                       `<div class="why">${s.reason||'Suggested slot'}</div>`;
+      const right = document.createElement('div');
+      const btn = document.createElement('button');
+      btn.className = 'btn'; btn.textContent = 'Confirm';
+      btn.addEventListener('click', ()=> confirmSlot(s, attendees, tz, btn));
+      right.appendChild(btn);
+      div.appendChild(left); div.appendChild(right);
+      list.appendChild(div);
+    });
+  }
+
+  async function confirmSlot(slot, attendees, tz, btn){
+    btn.disabled = true; btn.textContent = 'Confirming…';
+    try{
+      let resData;
+      if(MOCK_MODE()){
+        await sleep(400);
+        resData = { ok: true, eventId: 'evt_mock_'+ Math.random().toString(36).slice(2), htmlLink: '#' };
+      } else {
+        const res = await fetch(CONFIRM_ENDPOINT, { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ slot, attendees, tz, token: slot.token }) });
+        if(!res.ok) throw new Error(`Confirm failed: ${res.status}`);
+        resData = await res.json();
+      }
+      updateStatus(resData.ok ? `Booked! Event ${resData.eventId}` : 'Not booked', resData.ok?'ok':'warn');
+      if(resData.htmlLink){
+        const a = document.createElement('a'); a.href = resData.htmlLink; a.target = '_blank'; a.textContent = 'Open in Calendar';
+        $('status').appendChild(document.createTextNode(' ')); $('status').appendChild(a);
+      }
+    }catch(err){ console.error(err); updateStatus(String(err.message||err),'error'); }
+    finally { btn.disabled = false; btn.textContent = 'Confirm'; }
+  }
+
+  function sleep(ms){ return new Promise(r=>setTimeout(r, ms)); }
+
+  // ---------------------- Mock logic (frontend-only, for GH Pages testing) ----------------------
+  function mockSuggest({ range, durationMin, tz, bizHours }){
+    const start = new Date(range.fromISO);
+    const end = new Date(range.toISO);
+
+    const slots = [];
+    let cursor = new Date(start);
+    while(cursor < end && slots.length < 5){
+      const day = cursor.getDay(); // 0 sun .. 6 sat
+      const isWeekend = (day === 0 || day === 6);
+      const bhStart = bizHours.start, bhEnd = bizHours.end;
+      if(!isWeekend || bizHours.end - bizHours.start >= 24){
+        const hour = Math.max(bhStart, 9) + Math.floor(Math.random()*Math.max(1,(bhEnd-bhStart-1)));
+        const s = new Date(cursor); s.setHours(hour, 0, 0, 0);
+        const e = new Date(s.getTime() + durationMin*60000);
+        slots.push({ start: s.toISOString(), end: e.toISOString(), score: Math.random()*0.3 + 0.7, reason: `Within ${bhStart}:00–${bhEnd}:00 • ${durationMin}m • mock` });
+      }
+      cursor.setDate(cursor.getDate() + 1);
+    }
+    return { slots };
+  }
+</script>
+</body>
+</html>
